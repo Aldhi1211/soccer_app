@@ -70,8 +70,25 @@ export const login = async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (!user.isVerified) {
-        return res.status(403).json({ success: false, message: 'Email belum diverifikasi.' });
+    const SIX_MONTHS = 1000 * 60 * 60 * 24 * 30;
+
+    if (user.isVerified) {
+        const lastVerified = new Date(user.emailVerifiedAt || 0).getTime();
+        const now = Date.now();
+
+        if (now - lastVerified > SIX_MONTHS) {
+            user.isVerified = false;
+            user.verificationToken = crypto.randomBytes(32).toString('hex');
+            await user.save();
+
+            const verificationUrl = `http://localhost:3000/auth/verify-email?token=${user.verificationToken}`;
+            await sendEmail(user.email, user.name, verificationUrl);
+
+            return res.status(403).json({
+                success: false,
+                message: 'Email perlu diverifikasi ulang. Silakan cek email kamu.'
+            });
+        }
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
