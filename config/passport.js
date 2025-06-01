@@ -19,7 +19,9 @@ passport.use(new GoogleStrategy({
                 googleId: profile.id,
                 name: profile.displayName,
                 email: profile.emails[0].value,
-                photo: profile.photos[0].value
+                photo: profile.photos[0].value,
+                authProvider: "google",
+                isVerified: true
             });
         }
 

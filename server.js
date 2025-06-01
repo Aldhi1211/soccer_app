@@ -16,6 +16,8 @@ connectDB(); // panggil sebelum app.listen
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use(express.json()); // <<=== INI WAJIB untuk parsing body JSON
+
 app.use(session({
     secret: process.env.SESSION_SECRET,
     resave: false,
