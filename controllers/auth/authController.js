@@ -6,39 +6,45 @@ import crypto from 'crypto';
 import { sendEmail } from '../../utils/sendEmail.js';
 
 export const googleCallback = (req, res) => {
-    // Buat JWT
-    const token = jwt.sign(
-        { id: req.user._id, email: req.user.email },
-        process.env.JWT_SECRET,
-        { expiresIn: '15m' }
-    );
+    try {
 
-    const refreshToken = jwt.sign(
-        { id: req.user._id, email: req.user.email },
-        process.env.REFRESH_SECRET,
-        { expiresIn: '1d' } // 1 hari
-    );
+        // Buat JWT
+        const token = jwt.sign(
+            { id: req.user._id, email: req.user.email },
+            process.env.JWT_SECRET,
+            { expiresIn: '15m' }
+        );
 
-    // Kirim refresh token via cookie httpOnly
-    res.cookie('refreshToken', refreshToken, {
-        httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000, // 1 hari
-        secure: false, // set true kalau pakai HTTPS
-        sameSite: 'Lax'
-    });
+        const refreshToken = jwt.sign(
+            { id: req.user._id, email: req.user.email },
+            process.env.REFRESH_SECRET,
+            { expiresIn: '1d' } // 1 hari
+        );
 
-    // Redirect ke frontend (atau kirim token sebagai response JSON)
-    res.json({
-        success: true,
-        message: "Login Successful",
-        token: token,
-        user: {
-            id: req.user._id,
-            name: req.user.name,
-            email: req.user.email,
-            photo: req.user.photo
-        }
-    });
+        // Kirim refresh token via cookie httpOnly
+        res.cookie('refreshToken', refreshToken, {
+            httpOnly: true,
+            maxAge: 24 * 60 * 60 * 1000, // 1 hari
+            secure: false, // set true kalau pakai HTTPS
+            sameSite: 'Lax'
+        });
+
+        // Redirect ke frontend (atau kirim token sebagai response JSON)
+        res.json({
+            success: true,
+            message: "Login Successful",
+            token: token,
+            user: {
+                id: req.user._id,
+                name: req.user.name,
+                email: req.user.email,
+                photo: req.user.photo
+            }
+        });
+    } catch (error) {
+        logger.error("Google Callback Error:", error); // <--- log error di sini
+        res.status(500).json({ success: false, message: "Terjadi kesalahan server" });
+    }
 }
 
 export const refreshToken = (req, res) => {
@@ -60,70 +66,76 @@ export const refreshToken = (req, res) => {
         });
 
     } catch (err) {
+        logger.warn(`Invalid or expired refresh token`);
         return res.status(403).json({ success: false, message: 'Invalid or expired refresh token' });
     }
 };
 
 export const login = async (req, res) => {
-    const { email, password } = req.body;
+    try {
 
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ message: "User not found" });
+        const { email, password } = req.body;
 
-    const SIX_MONTHS = 1000 * 60 * 60 * 24 * 30;
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (user.isVerified) {
-        const lastVerified = new Date(user.emailVerifiedAt || 0).getTime();
-        const now = Date.now();
+        const SIX_MONTHS = 1000 * 60 * 60 * 24 * 30; // 1 Bulan
 
-        if (now - lastVerified > SIX_MONTHS) {
-            user.isVerified = false;
-            user.verificationToken = crypto.randomBytes(32).toString('hex');
-            await user.save();
+        if (user.isVerified) {
+            const lastVerified = new Date(user.emailVerifiedAt || 0).getTime();
+            const now = Date.now();
 
-            const verificationUrl = `http://localhost:3000/auth/verify-email?token=${user.verificationToken}`;
-            await sendEmail(user.email, user.name, verificationUrl);
+            if (now - lastVerified > SIX_MONTHS) {
+                user.isVerified = false;
+                user.verificationToken = crypto.randomBytes(32).toString('hex');
+                await user.save();
 
-            return res.status(403).json({
-                success: false,
-                message: 'Email perlu diverifikasi ulang. Silakan cek email kamu.'
-            });
+                const verificationUrl = `http://localhost:3000/auth/verify-email?token=${user.verificationToken}`;
+                await sendEmail(user.email, user.name, verificationUrl);
+
+                return res.status(403).json({
+                    success: false,
+                    message: 'Email perlu diverifikasi ulang. Silakan cek email kamu.'
+                });
+            }
         }
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
+
+        const accessToken = jwt.sign(
+            { id: user._id },
+            process.env.JWT_SECRET,
+            { expiresIn: '15m' }
+        );
+
+        const refreshToken = jwt.sign(
+            { id: user._id },
+            process.env.REFRESH_SECRET,
+            { expiresIn: '1d' }
+        );
+
+        // ⬇️ Simpan refresh token ke cookie (HTTPOnly agar aman)
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "Strict",
+            maxAge: 24 * 60 * 60 * 1000 // 1 hari
+        });
+
+        res.json({
+            success: true,
+            message: "Login successful",
+            accessToken,
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email
+            }
+        });
+    } catch (error) {
+        logger.error("Login Error:", error); // <--- log error di sini
+        res.status(500).json({ success: false, message: "Terjadi kesalahan server" });
     }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
-
-    const accessToken = jwt.sign(
-        { id: user._id },
-        process.env.JWT_SECRET,
-        { expiresIn: '15m' }
-    );
-
-    const refreshToken = jwt.sign(
-        { id: user._id },
-        process.env.REFRESH_SECRET,
-        { expiresIn: '1d' }
-    );
-
-    // ⬇️ Simpan refresh token ke cookie (HTTPOnly agar aman)
-    res.cookie("refreshToken", refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "Strict",
-        maxAge: 24 * 60 * 60 * 1000 // 1 hari
-    });
-
-    res.json({
-        success: true,
-        message: "Login successful",
-        accessToken,
-        user: {
-            id: user._id,
-            name: user.name,
-            email: user.email
-        }
-    });
 };
 
 export const register = async (req, res) => {
@@ -172,25 +184,30 @@ export const register = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error("❌ Register Error:", error);
+        logger.error("Register Error:", error); // <--- log error di sini
         res.status(500).json({ success: false, message: "Terjadi kesalahan server" });
     }
 };
 
 
 export const verifyEmail = async (req, res) => {
-    const { token } = req.query;
+    try {
+        const { token } = req.query;
 
-    const user = await User.findOne({ verificationToken: token });
-    if (!user) {
-        return res.status(400).json({ success: false, message: 'Token tidak valid.' });
+        const user = await User.findOne({ verificationToken: token });
+        if (!user) {
+            return res.status(400).json({ success: false, message: 'Token tidak valid.' });
+        }
+
+        // Saat user klik link verifikasi
+        user.isVerified = true;
+        user.emailVerifiedAt = new Date();
+        user.verificationToken = undefined;
+        await user.save();
+
+        res.json({ success: true, message: 'Email berhasil diverifikasi.' });
+    } catch (error) {
+        logger.error("Verify Email Error:", error); // <--- log error di sini
+        res.status(500).json({ success: false, message: "Terjadi kesalahan server" });
     }
-
-    // Saat user klik link verifikasi
-    user.isVerified = true;
-    user.emailVerifiedAt = new Date();
-    user.verificationToken = undefined;
-    await user.save();
-
-    res.json({ success: true, message: 'Email berhasil diverifikasi.' });
 };

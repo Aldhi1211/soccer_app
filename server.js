@@ -3,6 +3,7 @@ import session from 'express-session';
 import passport from 'passport';
 import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
+import logger from './utils/logger.js';
 
 import authRoutes from './routes/auth.routes.js';
 import './config/passport.js'; // pastikan ini dipanggil agar strategi aktif
@@ -36,5 +37,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    logger.info(`Server running on http://localhost:${PORT}`);
 });
